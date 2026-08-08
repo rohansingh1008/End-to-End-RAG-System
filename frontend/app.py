@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+BACKEND_URL = "https://rag-backend-8aqt.onrender.com"
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
