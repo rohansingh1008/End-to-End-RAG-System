@@ -38,7 +38,7 @@ with st.sidebar:
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
                 data = {"session_id": st.session_state.session_id}
                 
-                res = requests.post(f"{API_URL}/upload", files=files, data=data)
+                res = requests.post(f"{BACKEND_URL}/upload", files=files, data=data, timeout=120)
                 
                 if res.status_code == 200:
                     res_data = res.json()
@@ -97,8 +97,9 @@ if user_query := st.chat_input("Ask anything about your uploaded doc..."):
                     query_status.write("🔎 **Step 1/2:** Searching vector store for top matching context chunks...")
                     
                     res = requests.post(
-                        f"{API_URL}/query",
-                        json={"session_id": st.session_state.session_id, "query": user_query}
+                        f"{BACKEND_URL}/query",
+                        json={"session_id": st.session_state.session_id, "query": user_query},
+                        timeout=120
                     )
                     
                     if res.status_code == 200:
