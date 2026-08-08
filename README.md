@@ -1,72 +1,125 @@
-# Devlog — August 8, 2026
+📄 End-to-End RAG System
 
-## Project: End-to-End RAG System
+An ephemeral, session-based Retrieval-Augmented Generation (RAG) app. Upload a document, ask questions about it, and get answers grounded in the document's content — powered by a FastAPI backend and a Streamlit chat interface.
 
-### Summary
-Debugged and deployed the FastAPI backend to Render, connected the Streamlit
-frontend, and diagnosed slow/failing document processing caused by free-tier
-resource limits.
+Live demo:
 
----
+Frontend: rag-rohanbot.streamlit.app
+Backend API docs: rag-backend-8aqt.onrender.com/docs
 
-### Issues Found & Fixed
+⚠️ Hosted on free-tier services (Render + Streamlit Cloud). The backend spins down after inactivity, so the first request after idling can take 30–60+ seconds while it wakes up and loads the embedding model.
 
-1. **Import path mismatch (local dev)**
-   - `backend/app/embedding.py` used `from app.config import ...` instead of
-     `from backend.app.config import ...`, causing
-     `ModuleNotFoundError: No module named 'app'` when running
-     `uvicorn backend.main:app`.
-   - Fix: aligned all internal imports to the `backend.app.*` package path.
+✨ Features
+Multi-format document upload — PDF, DOCX, TXT, CSV, and Markdown
+Session-based, ephemeral storage — each session gets its own isolated vector store; nothing persists after the session ends
+Chat interface — ask natural-language questions about your uploaded document
+Source attribution — see which retrieved chunks were used to generate each answer
+Fast, local embeddings — via sentence-transformers (all-MiniLM-L6-v2)
+LLM answers via Groq — fast inference using openai/gpt-oss-20b
+🏗️ Architecture
+┌─────────────────┐        HTTP        ┌──────────────────────┐
+│  Streamlit UI    │ ─────────────────▶ │  FastAPI Backend       │
+│  (frontend/app.py)│ ◀───────────────── │  (backend/main.py)     │
+└─────────────────┘                     └──────────┬────────────┘
+                                                     │
+                        ┌────────────────────────────┼────────────────────────────┐
+                        ▼                            ▼                            ▼
+                 Document Loader              Text Splitter              Session Vector Store
+             (PyMuPDF / python-docx /    (RecursiveCharacterText       (ChromaDB, per-session
+              CSVLoader / TextLoader)         Splitter)                    collection)
+                        │                                                       │
+                        ▼                                                       ▼
+               Embedding Manager  ─────────────────────────────────▶  Retriever  ──▶  Groq LLM
+             (sentence-transformers)                                (top-k similarity search)
 
-2. **Render deploy timing out ("Timed Out" / "no open ports detected")**
-   - Root cause: `torch` was installing the default CUDA build (multi-GB),
-     which was too slow/heavy to import within Render's port-binding window
-     on the free tier.
-   - Fix: pinned CPU-only torch in `requirements.txt`:
-     ```
-     --extra-index-url https://download.pytorch.org/whl/cpu
-     torch
-     ```
-   - Result: build succeeded, `torch==2.13.0+cpu` installed, deploy went live.
+Flow:
 
-3. **Frontend "Connection Error!" on every request**
-   - Root cause: `frontend/app.py` referenced an undefined variable
-     `API_URL` in both `requests.post()` calls, instead of the defined
-     `BACKEND_URL`. This raised a `NameError`, caught by the generic
-     `except Exception` block and shown as "Connection Error!".
-   - Fix: renamed both references to `BACKEND_URL`, added
-     `timeout=120` (later considered raising to `300`) to both requests.
+User uploads a document → backend loads, splits into chunks, embeds, and stores vectors in a per-session ChromaDB collection.
+User asks a question → backend embeds the query, retrieves the top-k most relevant chunks, and passes them as context to the Groq LLM.
+The LLM's answer is returned along with the source chunks used.
+🛠️ Tech Stack
+Layer	Technology
+Backend API	FastAPI, Uvicorn
+Frontend	Streamlit
+Document loading	LangChain community loaders (PyMuPDF, python-docx, CSVLoader, TextLoader)
+Text splitting	LangChain RecursiveCharacterTextSplitter
+Embeddings	sentence-transformers (all-MiniLM-L6-v2), CPU-only PyTorch
+Vector store	ChromaDB (persistent, per-session)
+LLM	Groq (langchain-groq, model: openai/gpt-oss-20b)
+Hosting	Render (backend), Streamlit Community Cloud (frontend)
+📁 Project Structure
+rag_project/
+├── backend/
+│   ├── main.py              # FastAPI app, routes: /upload, /query, /session/{id}
+│   └── app/
+│       ├── config.py        # env vars, model name, temp dir setup
+│       ├── loader.py        # UniversalDocumentLoader (multi-format)
+│       ├── splitter.py      # DocumentSplitter
+│       ├── embedding.py     # EmbeddingManager (sentence-transformers)
+│       ├── vectorstore.py   # SessionVectorStore (ChromaDB)
+│       ├── retriever.py     # SessionRetriever
+│       └── llm.py           # get_groq_llm()
+├── frontend/
+│   └── app.py                # Streamlit chat UI
+├── requirements.txt
+└── README.md
+🚀 Getting Started (Local Development)
+Prerequisites
+Python 3.10+
+A Groq API key
+1. Clone the repo
+bash
+git clone https://github.com/rohansingh1008/End-to-End-RAG-System.git
+cd End-to-End-RAG-System
+2. Set up a virtual environment
+bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+3. Install dependencies
+bash
+pip install -r requirements.txt
+4. Configure environment variables
 
-4. **Slow / failing document processing on Render free tier**
-   - Confirmed via error message:
-     `HTTPSConnectionPool(...): Read timed out. (read timeout=120)`
-   - Cause: cold start (free instance spins down after inactivity) +
-     `sentence-transformers`/`torch` model load + first-time Hugging Face
-     model download, all within a 512MB RAM, shared-CPU instance.
-   - A follow-up attempt failed in ~1 second instead of timing out —
-     suspected OOM kill / container restart, not yet confirmed via logs.
+Create a .env file in the project root:
 
----
+GROQ_API_KEY=your_groq_api_key_here
+5. Run the backend
+bash
+uvicorn backend.main:app --reload --port 8000
 
-### Open Items / Next Steps
-- [ ] Pull Render logs for the fast (~1s) failure to confirm OOM vs. a
-      different error.
-- [ ] Consider replacing `torch` + `sentence-transformers` with `fastembed`
-      (ONNX-based, much lighter memory footprint) to fit comfortably in
-      free-tier RAM.
-- [ ] Alternative: use a hosted embeddings API instead of local inference.
-- [ ] Alternative: upgrade Render to a paid instance (no spin-down, more
-      RAM/CPU) if this needs to be reliably fast.
-- [ ] Decide on `HF_TOKEN` env var to speed up/avoid rate limits on model
-      downloads if sticking with Hugging Face model loading.
-- [ ] Resolve `uv.lock` vs `requirements.txt` ambiguity on Streamlit Cloud
-      (it defaulted to `uv.lock`, which may not reflect the CPU-only torch
-      pin) — decide on a single source of truth.
+API docs available at http://localhost:8000/docs.
 
----
+6. Run the frontend
 
-### Status
-Backend: live on Render (`https://rag-backend-8aqt.onrender.com`)
-Frontend: live on Streamlit Cloud (`https://rag-rohanbot.streamlit.app`)
-Core bug (frontend/backend connection): **fixed**
-Performance on free tier: **needs further work**
+In a separate terminal:
+
+bash
+streamlit run frontend/app.py
+
+Update BACKEND_URL in frontend/app.py to http://localhost:8000 for local testing.
+
+🌐 Deployment
+Backend is deployed on Render as a web service. Start command:
+  uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+
+Set GROQ_API_KEY as an environment variable in the Render dashboard.
+
+Frontend is deployed on Streamlit Community Cloud, pointing to frontend/app.py, with BACKEND_URL set to the live Render backend URL.
+
+Note: torch is pinned to the CPU-only build in requirements.txt (--extra-index-url https://download.pytorch.org/whl/cpu) to keep install size and import time manageable on free-tier hosting.
+
+📌 Known Limitations
+Sessions and their vector stores are in-memory / ephemeral — restarting the backend clears all active sessions.
+Free-tier hosting means cold starts (~30–60s) after periods of inactivity.
+No authentication — sessions are only isolated by a randomly generated session ID, not access-controlled.
+🗺️ Roadmap
+ Reduce cold-start time (lighter embedding runtime, e.g. fastembed, or hosted embeddings API)
+ Persistent session storage option
+ Multi-document sessions
+ Streaming LLM responses
+📄 License
+
+Add your preferred license here (e.g. MIT).
