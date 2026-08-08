@@ -1,0 +1,72 @@
+# Devlog — August 8, 2026
+
+## Project: End-to-End RAG System
+
+### Summary
+Debugged and deployed the FastAPI backend to Render, connected the Streamlit
+frontend, and diagnosed slow/failing document processing caused by free-tier
+resource limits.
+
+---
+
+### Issues Found & Fixed
+
+1. **Import path mismatch (local dev)**
+   - `backend/app/embedding.py` used `from app.config import ...` instead of
+     `from backend.app.config import ...`, causing
+     `ModuleNotFoundError: No module named 'app'` when running
+     `uvicorn backend.main:app`.
+   - Fix: aligned all internal imports to the `backend.app.*` package path.
+
+2. **Render deploy timing out ("Timed Out" / "no open ports detected")**
+   - Root cause: `torch` was installing the default CUDA build (multi-GB),
+     which was too slow/heavy to import within Render's port-binding window
+     on the free tier.
+   - Fix: pinned CPU-only torch in `requirements.txt`:
+     ```
+     --extra-index-url https://download.pytorch.org/whl/cpu
+     torch
+     ```
+   - Result: build succeeded, `torch==2.13.0+cpu` installed, deploy went live.
+
+3. **Frontend "Connection Error!" on every request**
+   - Root cause: `frontend/app.py` referenced an undefined variable
+     `API_URL` in both `requests.post()` calls, instead of the defined
+     `BACKEND_URL`. This raised a `NameError`, caught by the generic
+     `except Exception` block and shown as "Connection Error!".
+   - Fix: renamed both references to `BACKEND_URL`, added
+     `timeout=120` (later considered raising to `300`) to both requests.
+
+4. **Slow / failing document processing on Render free tier**
+   - Confirmed via error message:
+     `HTTPSConnectionPool(...): Read timed out. (read timeout=120)`
+   - Cause: cold start (free instance spins down after inactivity) +
+     `sentence-transformers`/`torch` model load + first-time Hugging Face
+     model download, all within a 512MB RAM, shared-CPU instance.
+   - A follow-up attempt failed in ~1 second instead of timing out —
+     suspected OOM kill / container restart, not yet confirmed via logs.
+
+---
+
+### Open Items / Next Steps
+- [ ] Pull Render logs for the fast (~1s) failure to confirm OOM vs. a
+      different error.
+- [ ] Consider replacing `torch` + `sentence-transformers` with `fastembed`
+      (ONNX-based, much lighter memory footprint) to fit comfortably in
+      free-tier RAM.
+- [ ] Alternative: use a hosted embeddings API instead of local inference.
+- [ ] Alternative: upgrade Render to a paid instance (no spin-down, more
+      RAM/CPU) if this needs to be reliably fast.
+- [ ] Decide on `HF_TOKEN` env var to speed up/avoid rate limits on model
+      downloads if sticking with Hugging Face model loading.
+- [ ] Resolve `uv.lock` vs `requirements.txt` ambiguity on Streamlit Cloud
+      (it defaulted to `uv.lock`, which may not reflect the CPU-only torch
+      pin) — decide on a single source of truth.
+
+---
+
+### Status
+Backend: live on Render (`https://rag-backend-8aqt.onrender.com`)
+Frontend: live on Streamlit Cloud (`https://rag-rohanbot.streamlit.app`)
+Core bug (frontend/backend connection): **fixed**
+Performance on free tier: **needs further work**
