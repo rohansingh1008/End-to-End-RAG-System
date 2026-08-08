@@ -1,7 +1,7 @@
 import shutil
 import uuid
 import chromadb
-from .config import BASE_TEMP_DIR
+from backend.app.config import BASE_TEMP_DIR
 
 class SessionVectorStore:
     def __init__(self, session_id: str):

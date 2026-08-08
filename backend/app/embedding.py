@@ -1,6 +1,6 @@
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from app.config import EMBED_MODEL_NAME
+from backend.app.config import EMBED_MODEL_NAME
 
 class EmbeddingManager:
     def __init__(self, model_name: str = EMBED_MODEL_NAME):

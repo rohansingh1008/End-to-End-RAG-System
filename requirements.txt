@@ -5,6 +5,8 @@ langchain
 langchain-community
 langchain-text-splitters
 langchain-groq
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 sentence-transformers
 chromadb
 python-docx
